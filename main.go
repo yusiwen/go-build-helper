@@ -18,8 +18,9 @@ func main() {
 		Version: strings.Join([]string{constant.Version, " (", constant.BuildTime, ")"}, ""),
 		Commands: []*R.Command{
 			{
-				Name:  "date",
-				Usage: "Get current date",
+				Name:        "date",
+				Usage:       "go-build-helper date [FORMAT_STRING]",
+				Description: "Get current date with given format, default format is '2006-01-02 15:04:05 -0700 MST'",
 				Action: func(c *R.Context) error {
 					format := c.Args().First()
 					output, err := D.Date(format)
@@ -30,15 +31,18 @@ func main() {
 				},
 			},
 			{
-				Name:  "version",
-				Usage: "Get git version",
+				Name:        "version",
+				Usage:       "go-build-helper version [GIT_REPO_LOCATION]",
+				Description: "Get current git veresion, like 'git describe --tags'",
 				Action: func(c *R.Context) error {
-					output, err := V.Version()
+					repo := c.Args().First()
+					output, err := V.Version(repo)
 					if err == nil {
 						fmt.Println(output)
-						fmt.Println(output)
+					} else {
+						fmt.Println("n/a")
 					}
-					return err
+					return nil
 				},
 			},
 		},

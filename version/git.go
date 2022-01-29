@@ -1,11 +1,14 @@
 package version
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/storer"
 	"path/filepath"
+	"strings"
 )
 
 func GetCurrentBranchFromRepository(repository *git.Repository) (string, error) {
@@ -33,7 +36,7 @@ func GetCurrentBranchFromRepository(repository *git.Repository) (string, error) 
 		return "", err
 	}
 
-	return currentBranchName, nil
+	return strings.TrimPrefix(currentBranchName, "refs/heads/"), nil
 }
 
 func GetCurrentCommitFromRepository(repository *git.Repository) (string, error) {
@@ -43,17 +46,25 @@ func GetCurrentCommitFromRepository(repository *git.Repository) (string, error) 
 	}
 	headSha := headRef.Hash().String()
 
-	return headSha, nil
+	return headSha[0:9], nil
 }
 
-func GetLatestTagFromRepository(repository *git.Repository) (string, error) {
+func GetTagName(tag *plumbing.Reference) string {
+	if tag != nil {
+		return strings.TrimPrefix(tag.Name().String(), "refs/tags/")
+	}
+
+	return "v0.0.0"
+}
+
+func GetLatestTagFromRepository(repository *git.Repository) (*plumbing.Reference, error) {
 	tagRefs, err := repository.Tags()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	var latestTagCommit *object.Commit
-	var latestTagName string
+	var latestTag *plumbing.Reference
 	err = tagRefs.ForEach(func(tagRef *plumbing.Reference) error {
 		revision := plumbing.Revision(tagRef.Name().String())
 		tagCommitHash, err := repository.ResolveRevision(revision)
@@ -68,21 +79,52 @@ func GetLatestTagFromRepository(repository *git.Repository) (string, error) {
 
 		if latestTagCommit == nil {
 			latestTagCommit = commit
-			latestTagName = tagRef.Name().String()
+			latestTag = tagRef
 		}
 
 		if commit.Committer.When.After(latestTagCommit.Committer.When) {
 			latestTagCommit = commit
-			latestTagName = tagRef.Name().String()
+			latestTag = tagRef
 		}
 
 		return nil
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return latestTagName, nil
+	return latestTag, nil
+}
+
+func CalculateAheadCommits(repository *git.Repository, targetRef *plumbing.Reference) (int, error) {
+	head, err := repository.Head()
+	if err != nil {
+		return -1, err
+	}
+	cIter, err := repository.Log(&git.LogOptions{
+		// All:   true,
+		From:  head.Hash(),
+		Order: git.LogOrderCommitterTime,
+	})
+	if err != nil {
+		return -1, err
+	}
+
+	var count = 0
+	err = cIter.ForEach(func(c *object.Commit) error {
+		if targetRef != nil {
+			t_hash := targetRef.Hash()
+			if bytes.Equal(c.Hash[:], t_hash[:]) {
+				// Found!
+				return storer.ErrStop
+			}
+		}
+		count++
+		// No luck continue searching.
+		return nil
+	})
+
+	return count, nil
 }
 
 func Version(location string) (string, error) {
@@ -96,23 +138,26 @@ func Version(location string) (string, error) {
 		return "", err
 	}
 
-	o, err := GetCurrentBranchFromRepository(r)
+	branchName, err := GetCurrentBranchFromRepository(r)
 	if err != nil {
 		return "", err
 	}
-	fmt.Println(o)
 
-	o, err = GetLatestTagFromRepository(r)
+	t, err := GetLatestTagFromRepository(r)
 	if err != nil {
 		return "", err
 	}
-	fmt.Println(o)
+	tagName := GetTagName(t)
 
-	o, err = GetCurrentCommitFromRepository(r)
+	headHash, err := GetCurrentCommitFromRepository(r)
 	if err != nil {
 		return "", err
 	}
-	fmt.Println(o)
 
-	return "", nil
+	c, err := CalculateAheadCommits(r, t)
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("%s-%d-%s (%s)", tagName, c, headHash, branchName), nil
 }
